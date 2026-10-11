@@ -1,0 +1,14 @@
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# 環境変数（秘密情報を含むためコミットしない）
+.env
+.env.local
+.env.*.local
+
+.DS_Store
+npm-debug.log*
