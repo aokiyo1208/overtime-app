@@ -67,7 +67,7 @@ npm run typecheck
 - `AUTH_SECRET` と Google の認証情報は、ホスティング側の環境変数に設定します（Gitに入れません）
 - `DEV_LOGIN` は本番では設定しません（設定しても無効です）
 - DBは日次バックアップを取り、変更履歴（`change_logs`）は5年間保存してください
-- 承認・却下のメール通知は `src/lib/notify.ts` が現在ログ出力のみです。Gmail API や SendGrid に差し替えます
+- 承認・却下のメール通知は、`.env` の `SMTP_*` / `MAIL_FROM` を設定するとSMTPで送信します（Google Workspace の SMTP リレーなどが使えます）。未設定ならログ出力のみで、送信に失敗しても承認処理は止まりません
 
 ## ディレクトリ
 
