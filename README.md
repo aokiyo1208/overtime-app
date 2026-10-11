@@ -80,3 +80,10 @@ src/db/schema.ts    テーブル定義
 drizzle/            マイグレーションSQL
 scripts/            migrate / seed
 ```
+
+## Vercel にデプロイする
+
+1. Vercel でこのリポジトリをインポートする（Framework は Next.js。ビルドは `vercel-build` が使われ、マイグレーションと初期データ投入（管理者・設定・祝日）を自動で行います）
+2. PostgreSQL（Neon など）を用意し、環境変数を設定する：`DATABASE_URL`（プール接続のURL）、`AUTH_SECRET`、`AUTH_GOOGLE_ID`、`AUTH_GOOGLE_SECRET`、`ALLOWED_DOMAIN`、`SEED_ADMIN_EMAIL`、`SEED_ADMIN_NAME`、`AUTH_TRUST_HOST=true`（必要に応じて `SMTP_*`）
+3. Google の OAuth クライアントに、承認済みのリダイレクトURI `https://<本番のドメイン>/api/auth/callback/google` を追加する
+4. `DEV_LOGIN` は本番では設定しない
