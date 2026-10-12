@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { holidays } from "@/db/schema";
 import { getSettings } from "@/lib/payroll";
 import { fmtDateLong } from "@/lib/time";
+import { domainsLabel } from "@/lib/domains";
 import { Flash, one, type SP } from "@/components/flash";
 import { addHoliday, deleteHolidays, saveSettings } from "../actions";
 
@@ -15,7 +16,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: SP 
   const s = await getSettings();
   const hs = await db.select().from(holidays).orderBy(asc(holidays.date));
   const company = new Set(s.companyHolidayWeekdays.split(",").filter(Boolean).map(Number));
-  const domain = process.env.ALLOWED_DOMAIN;
+  const domain = domainsLabel();
 
   return (
     <>
@@ -96,7 +97,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: SP 
 
       <section className="card stack" style={{ maxWidth: 720 }}>
         <h2>ログインの設定（環境変数）</h2>
-        <p className="small muted">許可ドメイン：<span className="mono">{domain ? `@${domain}` : "（未設定：どのドメインも許可）"}</span>。変更は .env の ALLOWED_DOMAIN を編集して再起動してください。</p>
+        <p className="small muted">許可ドメイン：<span className="mono">{domain || "（未設定：どのドメインも許可）"}</span>。変更は環境変数 ALLOWED_DOMAIN を編集して再起動（再デプロイ）してください。複数ある場合はカンマ区切りです。</p>
       </section>
     </>
   );

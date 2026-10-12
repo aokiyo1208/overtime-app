@@ -6,6 +6,7 @@ import { asc, desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { employees } from "@/db/schema";
 import { findEmployeeByEmail } from "@/lib/session";
+import { domainsLabel } from "@/lib/domains";
 
 export const metadata = { title: "ログイン" };
 
@@ -25,7 +26,7 @@ export default async function LoginPage({ searchParams }: { searchParams: SP }) 
   }
   const sp = await searchParams;
   const error = one(sp.error);
-  const domain = process.env.ALLOWED_DOMAIN;
+  const domain = domainsLabel();
   const devUsers = devLoginEnabled
     ? await db.select().from(employees).where(eq(employees.isActive, true)).orderBy(desc(employees.role), asc(employees.name))
     : [];
@@ -64,7 +65,7 @@ export default async function LoginPage({ searchParams }: { searchParams: SP }) 
           </button>
         </form>
 
-        {domain && <p className="note">@{domain} のアカウントのみ利用できます。</p>}
+        {domain && <p className="note">{domain} のアカウントのみ利用できます。</p>}
 
         {devLoginEnabled && (
           <form

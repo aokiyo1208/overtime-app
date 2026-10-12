@@ -5,10 +5,11 @@ import type { Provider } from "next-auth/providers";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { employees } from "@/db/schema";
+import { allowedDomains, isAllowedEmail } from "@/lib/domains";
 
 const findByEmail = (email: string) => db.query.employees.findFirst({ where: eq(employees.email, email.toLowerCase()) });
 
-const allowedDomain = (process.env.ALLOWED_DOMAIN ?? "").toLowerCase();
+const domains = allowedDomains();
 
 /** 開発用ログインは NODE_ENV=production では常に無効 */
 export const devLoginEnabled = process.env.NODE_ENV !== "production" && process.env.DEV_LOGIN === "true";
@@ -19,7 +20,8 @@ const providers: Provider[] = [
       params: {
         prompt: "select_account",
         // Googleのアカウント選択画面を自社ドメインに絞る（最終的な判定は signIn で行う）
-        ...(allowedDomain ? { hd: allowedDomain } : {}),
+        // （hd は1ドメインのときだけ指定できる）
+        ...(domains.length === 1 ? { hd: domains[0] } : {}),
       },
     },
   }),
@@ -52,7 +54,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
       const email = String(profile?.email ?? user?.email ?? "").toLowerCase();
       if (!profile?.email_verified) return "/login?error=unverified";
-      if (allowedDomain && !email.endsWith(`@${allowedDomain}`)) return "/login?error=domain";
+      if (!isAllowedEmail(email)) return "/login?error=domain";
 
       const emp = await findByEmail(email);
       if (!emp || !emp.isActive) return "/login?error=not_registered";

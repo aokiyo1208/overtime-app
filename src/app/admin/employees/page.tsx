@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { employees } from "@/db/schema";
 import { Flash, one, type SP } from "@/components/flash";
 import { currentYm } from "@/lib/time";
+import { allowedDomains, domainsLabel } from "@/lib/domains";
 import { saveEmployee, setEmployeeActive } from "../actions";
 
 export const metadata = { title: "社員マスタ" };
@@ -11,13 +12,14 @@ export const metadata = { title: "社員マスタ" };
 export default async function EmployeesPage({ searchParams }: { searchParams: SP }) {
   const sp = await searchParams;
   const list = await db.select().from(employees).orderBy(desc(employees.isActive), asc(employees.name));
-  const domain = process.env.ALLOWED_DOMAIN;
+  const domain = domainsLabel();
+  const firstDomain = allowedDomains()[0];
 
   return (
     <>
       <header className="stack" style={{ gap: 4 }}>
         <h1>社員マスタ</h1>
-        <p className="small muted">ここに登録したGoogleアカウントだけがログインできます。{domain && `（@${domain}）`}</p>
+        <p className="small muted">ここに登録したGoogleアカウントだけがログインできます。{domain && `（${domain}）`}</p>
       </header>
       <Flash msg={one(sp.msg)} err={one(sp.err)} />
 
@@ -73,7 +75,7 @@ export default async function EmployeesPage({ searchParams }: { searchParams: SP
         <h2>社員を追加</h2>
         <form action={saveEmployee} className="stack">
           <div className="field"><label htmlFor="new-name">氏名</label><input id="new-name" name="name" className="input" required /></div>
-          <div className="field"><label htmlFor="new-email">会社のGoogleアドレス</label><input id="new-email" name="email" type="email" className="input" placeholder={domain ? `taro@${domain}` : "taro@example.com"} required /></div>
+          <div className="field"><label htmlFor="new-email">会社のGoogleアドレス</label><input id="new-email" name="email" type="email" className="input" placeholder={firstDomain ? `taro@${firstDomain}` : "taro@example.com"} required /></div>
           <div className="field"><label htmlFor="new-dept">部署（任意）</label><input id="new-dept" name="department" className="input" /></div>
           <div className="field">
             <label htmlFor="new-role">権限</label>

@@ -10,6 +10,7 @@ import { requireAdmin } from "@/lib/session";
 import { computeEmployeeMonth, getHolidayMap, getSettings, isMonthClosed, type EmployeeMonth } from "@/lib/payroll";
 import { logChange } from "@/lib/audit";
 import { notify } from "@/lib/notify";
+import { domainsLabel, isAllowedEmail } from "@/lib/domains";
 import { fmtDateShort, hmOf, isValidYm, jstDateTime, monthBounds, ymOf } from "@/lib/time";
 
 function back(path: string, kind: "msg" | "err", text: string): never {
@@ -232,8 +233,7 @@ export async function saveEmployee(fd: FormData) {
   const parsed = EmployeeInput.safeParse(Object.fromEntries(fd));
   if (!parsed.success) back("/admin/employees", "err", parsed.error.issues[0].message);
   const v = parsed.data;
-  const domain = (process.env.ALLOWED_DOMAIN ?? "").toLowerCase();
-  if (domain && !v.email.endsWith(`@${domain}`)) back("/admin/employees", "err", `@${domain} のアドレスを入力してください。`);
+  if (!isAllowedEmail(v.email)) back("/admin/employees", "err", `${domainsLabel()} のアドレスを入力してください。`);
 
   const id = String(fd.get("id") ?? "");
   if (id) {

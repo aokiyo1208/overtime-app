@@ -37,7 +37,7 @@ Googleの設定をする前でも、`.env` の `DEV_LOGIN="true"` で、画面�
 1. [Google Cloud Console](https://console.cloud.google.com/) > APIとサービス > 認証情報 > OAuthクライアントID（ウェブアプリ）を作成
 2. 承認済みのリダイレクトURIに `http://localhost:3000/api/auth/callback/google` を追加（本番は本番のURLで追加）
 3. クライアントIDとシークレットを `.env` の `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` に設定
-4. `ALLOWED_DOMAIN` に自社のドメインを設定
+4. `ALLOWED_DOMAIN` に自社のドメインを設定（複数ある場合はカンマ区切り）
 
 ログインできるのは、許可ドメインのGoogleアカウントで、かつ社員マスタに登録済み・在籍中の人だけです。
 社員の追加は管理者が「社員」画面で行います。
