@@ -7,6 +7,8 @@ import { domainsLabel } from "@/lib/domains";
 import { Flash, one, type SP } from "@/components/flash";
 import { addHoliday, deleteHolidays, saveSettings } from "../actions";
 
+import { BackLink } from "@/components/back-link";
+
 export const metadata = { title: "システム設定" };
 
 const WD = ["日", "月", "火", "水", "木", "金", "土"];
@@ -21,6 +23,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: SP 
   return (
     <>
       <header className="stack" style={{ gap: 4 }}>
+        <BackLink href="/admin/approvals">承認待ちに戻る</BackLink>
         <h1>システム設定</h1>
         <p className="small muted">就業規則・36協定に合わせて設定します。確定前の月の金額から、新しい設定で計算されます。</p>
       </header>

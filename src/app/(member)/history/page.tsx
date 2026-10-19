@@ -6,6 +6,8 @@ import { Flash, one, type SP } from "@/components/flash";
 import { IconLeft, IconRight } from "@/components/icons";
 import { cancelRequest, requestCorrection } from "../actions";
 
+import { BackLink } from "@/components/back-link";
+
 export const metadata = { title: "履歴" };
 
 export default async function HistoryPage({ searchParams }: { searchParams: SP }) {
@@ -19,6 +21,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: SP }
 
   return (
     <>
+      <div style={{ padding: "4px 20px 0" }}><BackLink href="/">打刻に戻る</BackLink></div>
       <header className="m-head" style={{ alignItems: "center" }}>
         <h1>履歴</h1>
         <div className="row" style={{ gap: 0 }}>

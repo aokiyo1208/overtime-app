@@ -7,6 +7,8 @@ import { excessMinutes } from "@/lib/overtime";
 import { Flash, one, type SP } from "@/components/flash";
 import { approveRequest, bulkApprove, decideExcess, rejectRequest } from "../actions";
 
+import { BackLink } from "@/components/back-link";
+
 export const metadata = { title: "承認待ち" };
 
 export default async function ApprovalsPage({ searchParams }: { searchParams: SP }) {
@@ -37,6 +39,7 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: SP
 
   return (
     <>
+      <BackLink href="/">打刻画面に戻る</BackLink>
       <header className="between" style={{ alignItems: "flex-end", flexWrap: "wrap" }}>
         <div className="stack" style={{ gap: 4 }}>
           <h1>承認待ち</h1>

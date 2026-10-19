@@ -5,6 +5,8 @@ import { Flash, one, type SP } from "@/components/flash";
 import { IconDownload, IconLeft, IconRight } from "@/components/icons";
 import { closeMonth, reopenMonth } from "../actions";
 
+import { BackLink } from "@/components/back-link";
+
 export const metadata = { title: "月次集計" };
 
 const z = (n: number) => (n === 0 ? "zero" : "");
@@ -37,6 +39,7 @@ export default async function MonthlyPage({ searchParams }: { searchParams: SP }
 
   return (
     <>
+      <BackLink href="/admin/approvals">承認待ちに戻る</BackLink>
       <header className="between" style={{ alignItems: "center", flexWrap: "wrap" }}>
         <div className="row" style={{ gap: 8 }}>
           <Link href={`/admin/monthly?m=${shiftYm(ym, -1)}`} className="btn" aria-label="前の月" style={{ minWidth: 40, padding: 0 }}><IconLeft size={18} /></Link>

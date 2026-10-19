@@ -7,6 +7,8 @@ import { currentYm } from "@/lib/time";
 import { allowedDomains, domainsLabel } from "@/lib/domains";
 import { saveEmployee, setEmployeeActive } from "../actions";
 
+import { BackLink } from "@/components/back-link";
+
 export const metadata = { title: "社員マスタ" };
 
 export default async function EmployeesPage({ searchParams }: { searchParams: SP }) {
@@ -18,6 +20,7 @@ export default async function EmployeesPage({ searchParams }: { searchParams: SP
   return (
     <>
       <header className="stack" style={{ gap: 4 }}>
+        <BackLink href="/admin/approvals">承認待ちに戻る</BackLink>
         <h1>社員マスタ</h1>
         <p className="small muted">ここに登録したGoogleアカウントだけがログインできます。{domain && `（${domain}）`}</p>
       </header>

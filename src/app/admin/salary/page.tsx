@@ -29,7 +29,7 @@ export default async function SalaryPage({ searchParams }: { searchParams: SP })
   return (
     <>
       <header className="stack" style={{ gap: 4 }}>
-        {one(sp.e) && <BackLink href="/admin/employees">社員マスタに戻る</BackLink>}
+        {one(sp.e) ? <BackLink href="/admin/employees">社員マスタに戻る</BackLink> : <BackLink href="/admin/approvals">承認待ちに戻る</BackLink>}
         <h1>給与マスタ</h1>
         <p className="small muted">
           月平均所定労働時間 {avgHours.toFixed(2)}時間（年間休日{settings.annualHolidays}日・1日{settings.dailyMinutes / 60}時間）で時間単価を計算しています。
