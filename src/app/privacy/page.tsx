@@ -1,8 +1,11 @@
+import { BackLink } from "@/components/back-link";
+
 export const metadata = { title: "プライバシーポリシー" };
 
 export default function PrivacyPage() {
   return (
     <main style={{ maxWidth: 720, margin: "0 auto", padding: "48px 24px", lineHeight: 1.8 }}>
+      <BackLink href="/login">ログインに戻る</BackLink>
       <h1 style={{ fontSize: 24, marginBottom: 16 }}>プライバシーポリシー（残業申請）</h1>
       <p>株式会社KENZO（以下「当社」）は、社内向けの残業申請システム（以下「本システム」）で取り扱う情報について、次のとおり定めます。</p>
 

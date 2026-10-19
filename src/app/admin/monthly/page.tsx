@@ -103,7 +103,7 @@ export default async function MonthlyPage({ searchParams }: { searchParams: SP }
               return (
                 <tr key={r.employee.id}>
                   <td>
-                    <Link href={`/admin/employees/${r.employee.id}?m=${ym}`} style={{ color: "var(--ink)", fontWeight: 700 }}>{r.employee.name}</Link>
+                    <Link href={`/admin/employees/${r.employee.id}?m=${ym}&from=monthly`} style={{ color: "var(--ink)", fontWeight: 700 }}>{r.employee.name}</Link>
                     {r.payType === "HOURLY" && <span className="xs muted"> 時給</span>}
                   </td>
                   <td className={`r ${z(r.totals.innerMinutes)}`}>{fmtMinutes(r.totals.innerMinutes)}</td>

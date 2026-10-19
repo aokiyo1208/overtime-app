@@ -6,6 +6,7 @@ import { getSettings } from "@/lib/payroll";
 import { avgMonthlyMinutes, hourlyRate } from "@/lib/overtime";
 import { fmtYen } from "@/lib/time";
 import { Flash, one, type SP } from "@/components/flash";
+import { BackLink } from "@/components/back-link";
 import { saveSalary } from "../actions";
 
 export const metadata = { title: "給与マスタ" };
@@ -28,6 +29,7 @@ export default async function SalaryPage({ searchParams }: { searchParams: SP })
   return (
     <>
       <header className="stack" style={{ gap: 4 }}>
+        {one(sp.e) && <BackLink href="/admin/employees">社員マスタに戻る</BackLink>}
         <h1>給与マスタ</h1>
         <p className="small muted">
           月平均所定労働時間 {avgHours.toFixed(2)}時間（年間休日{settings.annualHolidays}日・1日{settings.dailyMinutes / 60}時間）で時間単価を計算しています。

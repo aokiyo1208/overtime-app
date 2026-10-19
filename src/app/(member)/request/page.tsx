@@ -3,6 +3,7 @@ import { projectedMonth } from "@/lib/payroll";
 import { currentYm, todayYmd } from "@/lib/time";
 import { Flash, one, type SP } from "@/components/flash";
 import { RequestForm } from "@/components/request-form";
+import { BackLink } from "@/components/back-link";
 import { createRequest } from "../actions";
 
 export const metadata = { title: "残業申請" };
@@ -16,6 +17,7 @@ export default async function RequestPage({ searchParams }: { searchParams: SP }
   return (
     <>
       <header className="m-head" style={{ flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+        <BackLink href="/">打刻に戻る</BackLink>
         <h1>残業申請</h1>
         <p className="small muted">終業時刻までに申請してください</p>
       </header>

@@ -7,6 +7,7 @@ import { agreementStats, computeEmployeeMonth, dayTypeOf, DAY_TYPE_LABEL, getHol
 import { currentYm, fmtDateShort, fmtMinutes, fmtYen, fmtYm, hmOf, isValidYm, monthBounds, shiftYm } from "@/lib/time";
 import { Flash, one, type SP } from "@/components/flash";
 import { IconLeft, IconRight } from "@/components/icons";
+import { BackLink } from "@/components/back-link";
 import { cancelApproved, correctRecord } from "../../actions";
 
 export const metadata = { title: "社員別詳細" };
@@ -18,7 +19,9 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
   if (!emp) notFound();
   const m = one(sp.m);
   const ym = isValidYm(m) ? m : currentYm();
-  const to = `/admin/employees/${id}?m=${ym}`;
+  const fromMonthly = one(sp.from) === "monthly";
+  const fromQ = fromMonthly ? "&from=monthly" : "";
+  const to = `/admin/employees/${id}?m=${ym}${fromQ}`;
 
   const [settings, month, requests, closed, stats] = await Promise.all([
     getSettings(),
@@ -40,14 +43,14 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
     <>
       <header className="between" style={{ alignItems: "center", flexWrap: "wrap" }}>
         <div className="stack" style={{ gap: 2 }}>
-          <Link href="/admin/employees" className="small">← 社員マスタ</Link>
+          <BackLink href={fromMonthly ? `/admin/monthly?m=${ym}` : "/admin/employees"}>{fromMonthly ? "月次集計に戻る" : "社員マスタに戻る"}</BackLink>
           <h1>{emp.name}</h1>
           <p className="small muted mono">{emp.email}</p>
         </div>
         <div className="row" style={{ gap: 8 }}>
-          <Link href={`/admin/employees/${id}?m=${shiftYm(ym, -1)}`} className="btn" aria-label="前の月" style={{ minWidth: 40, padding: 0 }}><IconLeft size={18} /></Link>
+          <Link href={`/admin/employees/${id}?m=${shiftYm(ym, -1)}${fromQ}`} className="btn" aria-label="前の月" style={{ minWidth: 40, padding: 0 }}><IconLeft size={18} /></Link>
           <strong>{fmtYm(ym)}</strong>
-          <Link href={`/admin/employees/${id}?m=${shiftYm(ym, 1)}`} className="btn" aria-label="次の月" style={{ minWidth: 40, padding: 0 }}><IconRight size={18} /></Link>
+          <Link href={`/admin/employees/${id}?m=${shiftYm(ym, 1)}${fromQ}`} className="btn" aria-label="次の月" style={{ minWidth: 40, padding: 0 }}><IconRight size={18} /></Link>
           {closed && <span className="chip ok">確定済</span>}
         </div>
       </header>
