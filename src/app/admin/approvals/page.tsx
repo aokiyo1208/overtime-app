@@ -1,5 +1,11 @@
-import { and, asc, eq } from "drizzle-orm";
+import { activeTimeRecord } from "@/lib/time-record";
+import { asc, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { requireAdmin } from "@/lib/session";
+import { snapshotMatches } from "@/lib/correction-validation";
+import { CorrectionDiff, correctionDateTime } from "@/components/correction-summary";
+import { CorrectionSubmitButton } from "@/components/correction-form";
+import { approveCorrection, rejectCorrection } from "@/app/(member)/corrections/actions";
 import * as t from "@/db/schema";
 import { dayTypeOf, DAY_TYPE_LABEL, getHolidayMap, percentOfLimit, projectedMonth } from "@/lib/payroll";
 import { fmtDateShort, fmtMinutes, hmOf, ymOf } from "@/lib/time";
@@ -12,6 +18,7 @@ import { BackLink } from "@/components/back-link";
 export const metadata = { title: "承認待ち" };
 
 export default async function ApprovalsPage({ searchParams }: { searchParams: SP }) {
+  await requireAdmin();
   const sp = await searchParams;
   const pending = await db.query.overtimeRequests.findMany({
     where: eq(t.overtimeRequests.status, "PENDING"),
@@ -23,7 +30,7 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: SP
       where: eq(t.timeRecords.excessStatus, "PENDING"),
       with: { request: { with: { employee: true } } },
     })
-  ).filter((r) => r.endedAt);
+  ).filter((r) => activeTimeRecord(r) && r.endedAt);
 
   const settings = await db.query.settings.findFirst({ where: eq(t.settings.id, 1) });
   const holidayFrom = pending.map((r) => r.workDate).sort()[0] ?? "2026-01-01";
@@ -35,6 +42,12 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: SP
     const total = totals.statutoryMinutes;
     rows.push({ r, total, pct: percentOfLimit(total, s.limitMonthMinutes), limit: s.limitMonthMinutes, warnPercent: s.warnPercent });
   }
+  const corrections = await db.query.timeCorrectionRequests.findMany({
+    where: eq(t.timeCorrectionRequests.status, "PENDING"),
+    with: { request: { with: { employee: true, timeRecord: true } } },
+    orderBy: asc(t.timeCorrectionRequests.createdAt),
+  });
+  const closedMonths = new Set((await db.select().from(t.monthlyCloses)).map(row => row.yearMonth));
   const afterCount = pending.filter((r) => r.isAfterTheFact).length;
 
   return (
@@ -45,7 +58,7 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: SP
           <h1>承認待ち</h1>
           <p className="small muted">
             残業申請 {pending.length}件
-            {afterCount > 0 && `（事後申請 ${afterCount}件）`}・予定超過 {excess.length}件
+            {afterCount > 0 && `（事後申請 ${afterCount}件）`}・予定超過 {excess.length}件・打刻修正 {corrections.length}件
           </p>
         </div>
         <button type="submit" form="bulk" className="btn primary" disabled={pending.length === 0}>選択した申請を承認</button>
@@ -171,6 +184,51 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: SP
         )}
       </section>
 
+      <section className="stack" style={{ gap: 12 }} id="time-corrections">
+        <div className="stack" style={{ gap: 4 }}>
+          <div className="row"><h2>打刻修正の承認</h2><span className="chip wait">{corrections.length}件</span></div>
+          <p className="small muted">変更前と申請内容を確認し、日時修正は打刻に反映し、開始打刻の取り消しは未打刻に戻します。残業申請自体の承認とは別の操作です。</p>
+        </div>
+        {corrections.length === 0 && <p className="card muted">承認待ちの打刻修正はありません。</p>}
+        {corrections.map(item => {
+          const req = item.request;
+          const isStartCancellation = item.kind === "VOID_START";
+          const closed = closedMonths.has(ymOf(req.workDate));
+          const current = activeTimeRecord(req.timeRecord);
+          const stale = !snapshotMatches(item, current);
+          const eligible = req.status === "PENDING" || req.status === "APPROVED";
+          return <article key={item.id} className="card stack correction-review" style={{ gap: 16 }}>
+            <div className="between" style={{ flexWrap: "wrap" }}>
+              <div className="row" style={{ gap: 12 }}><strong>{req.employee.name}</strong><span className="small">{fmtDateShort(req.workDate)}</span><span className="chip wait">{isStartCancellation ? "開始取消の承認待ち" : "修正承認待ち"}</span></div>
+              <span className="xs muted">申請 {correctionDateTime(item.createdAt)}</span>
+            </div>
+            <div className="correction-review-body">
+              <CorrectionDiff correction={item} />
+              <div className="stack" style={{ gap: 10 }}>
+                <div><div className="xs muted">{isStartCancellation ? "開始打刻を取り消す理由" : "修正の理由"}</div><p className="small correction-reason">{item.reason}</p></div>
+                <div><div className="xs muted">対象の残業申請</div><p className="small correction-reason">{req.task}</p><p className="xs muted">予定 {correctionDateTime(req.plannedStart)} → {correctionDateTime(req.plannedEnd)}</p></div>
+                {req.status === "PENDING" && <p className="note warn">残業自体は未承認です。打刻修正を承認しても、残業の承認は完了しません。</p>}
+              </div>
+            </div>
+            {closed && <p className="note warn">対象月は確定済みです。承認・却下できません。</p>}
+            {!eligible && <p className="note warn">残業申請が却下・取り消し済みのため反映できません。</p>}
+            {stale && <p className="note warn">申請後に打刻が変更されています。この申請は承認できません。内容を確認し、再申請を依頼してください。</p>}
+            <div className="row correction-review-actions" style={{ gap: 12, alignItems: "flex-start" }}>
+              <form action={approveCorrection}><input type="hidden" name="correctionId" value={item.id} /><CorrectionSubmitButton disabled={closed || stale || !eligible} pendingLabel="反映中…">{isStartCancellation ? "承認して開始打刻を取り消す" : "承認して反映"}</CorrectionSubmitButton></form>
+              <details>
+                <summary className="btn danger" style={{ listStyle: "none" }}>理由を添えて却下</summary>
+                <form action={rejectCorrection} className="stack" style={{ marginTop: 12, maxWidth: 440 }}>
+                  <input type="hidden" name="correctionId" value={item.id} />
+                  <div className="field"><label htmlFor={`correction-reject-${item.id}`}>却下理由 <span className="req">必須</span></label><textarea id={`correction-reject-${item.id}`} name="comment" className="textarea" rows={3} maxLength={500} placeholder="本人が再申請できるよう、確認が必要な内容を記入してください。" required /></div>
+                  <CorrectionSubmitButton className="btn danger" disabled={closed} pendingLabel="却下中…">この理由で却下する</CorrectionSubmitButton>
+                </form>
+              </details>
+              <a href={`/admin/employees/${req.employeeId}?m=${ymOf(req.workDate)}`} className="btn">社員の履歴を見る</a>
+            </div>
+          </article>;
+        })}
+      </section>
+
       <CorrectionRequests />
     </>
   );
@@ -179,15 +237,15 @@ export default async function ApprovalsPage({ searchParams }: { searchParams: SP
 /** 社員からの打刻修正の依頼 */
 async function CorrectionRequests() {
   const all = await db.query.timeRecords.findMany({
-    where: and(eq(t.timeRecords.corrected, false)),
+    where: isNotNull(t.timeRecords.correctionRequest),
     with: { request: { with: { employee: true } } },
   });
-  const list = all.filter((r) => r.correctionRequest);
+  const list = all.filter((r) => activeTimeRecord(r) && r.correctionRequest);
   if (list.length === 0) return null;
   return (
     <section className="stack" style={{ gap: 10 }}>
       <div className="stack" style={{ gap: 2 }}>
-        <h2>打刻の修正依頼</h2>
+        <h2>以前の打刻修正依頼（未対応）</h2>
         <p className="small muted">社員別詳細の「打刻を修正」から時刻を直してください。</p>
       </div>
       {list.map((rec) => (

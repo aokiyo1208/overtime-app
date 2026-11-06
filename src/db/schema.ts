@@ -2,9 +2,10 @@
 // 日時はUTC（timestamptz）で保存し、画面ではJSTで表示する。
 // 日付（対象日など）は "YYYY-MM-DD" の文字列で扱う。時間は分、金額は円の整数。
 
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   date,
   doublePrecision,
   index,
@@ -24,6 +25,7 @@ const day = (name: string) => date(name, { mode: "string" });
 export const roleEnum = pgEnum("role", ["MEMBER", "ADMIN"]);
 export const payTypeEnum = pgEnum("pay_type", ["MONTHLY", "HOURLY"]);
 export const requestStatusEnum = pgEnum("request_status", ["PENDING", "APPROVED", "REJECTED", "CANCELED"]);
+export const correctionKindEnum = pgEnum("correction_kind", ["CORRECT", "VOID_START"]);
 export const excessStatusEnum = pgEnum("excess_status", ["NONE", "PENDING", "APPROVED", "REJECTED"]);
 
 export const employees = pgTable("employees", {
@@ -87,6 +89,8 @@ export const timeRecords = pgTable("time_records", {
   startedAt: ts("started_at").notNull(),
   endedAt: ts("ended_at"),
   breakMinutes: integer("break_minutes").notNull().default(0),
+  /** 誤った開始打刻の取消。元の時刻は保持し、通常画面では未打刻として扱う。 */
+  voidedAt: ts("voided_at"),
   /** 承認された予定時間を超えた分の扱い */
   excessStatus: excessStatusEnum("excess_status").notNull().default("NONE"),
   /** 社員からの打刻修正依頼（管理者が対応したら空にする） */
@@ -95,6 +99,33 @@ export const timeRecords = pgTable("time_records", {
   createdAt: ts("created_at").notNull().defaultNow(),
   updatedAt: ts("updated_at").notNull().defaultNow().$onUpdate(() => new Date()),
 });
+
+/** 社員が申請し、管理者の承認時にだけ反映される打刻修正。履歴は残す。 */
+export const timeCorrectionRequests = pgTable("time_correction_requests", {
+  id: id(),
+  kind: correctionKindEnum("kind").notNull().default("CORRECT"),
+  requestId: text("request_id").notNull().references(() => overtimeRequests.id),
+  employeeId: text("employee_id").notNull().references(() => employees.id),
+  originalRecordId: text("original_record_id").references(() => timeRecords.id),
+  originalStartedAt: ts("original_started_at"),
+  originalEndedAt: ts("original_ended_at"),
+  originalBreakMinutes: integer("original_break_minutes"),
+  originalUpdatedAt: ts("original_updated_at"),
+  proposedStartedAt: ts("proposed_started_at"),
+  proposedEndedAt: ts("proposed_ended_at"),
+  proposedBreakMinutes: integer("proposed_break_minutes").default(0),
+  reason: text("reason").notNull(),
+  status: requestStatusEnum("status").notNull().default("PENDING"),
+  reviewerId: text("reviewer_id").references(() => employees.id),
+  decidedAt: ts("decided_at"),
+  rejectComment: text("reject_comment"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+}, (t) => [
+  check("corrections_proposal_shape", sql`(${t.kind} = 'CORRECT' AND ${t.proposedStartedAt} IS NOT NULL AND ${t.proposedEndedAt} IS NOT NULL AND ${t.proposedBreakMinutes} IS NOT NULL) OR (${t.kind} = 'VOID_START' AND ${t.proposedStartedAt} IS NULL AND ${t.proposedEndedAt} IS NULL AND ${t.proposedBreakMinutes} IS NULL)`),
+  index("corrections_emp_created").on(t.employeeId, t.createdAt),
+  index("corrections_request").on(t.requestId),
+  uniqueIndex("corrections_one_pending").on(t.requestId).where(sql`${t.status} = 'PENDING'`),
+]);
 
 /** 打刻・申請・給与マスタの変更履歴（監査用） */
 export const changeLogs = pgTable(
@@ -176,7 +207,8 @@ export const employeesRelations = relations(employees, ({ many }) => ({
 export const salariesRelations = relations(salaries, ({ one }) => ({
   employee: one(employees, { fields: [salaries.employeeId], references: [employees.id] }),
 }));
-export const overtimeRequestsRelations = relations(overtimeRequests, ({ one }) => ({
+export const overtimeRequestsRelations = relations(overtimeRequests, ({ one, many }) => ({
+  corrections: many(timeCorrectionRequests),
   employee: one(employees, { fields: [overtimeRequests.employeeId], references: [employees.id], relationName: "requester" }),
   timeRecord: one(timeRecords, { fields: [overtimeRequests.id], references: [timeRecords.requestId] }),
 }));
@@ -193,3 +225,10 @@ export type Salary = typeof salaries.$inferSelect;
 export type OvertimeRequest = typeof overtimeRequests.$inferSelect;
 export type TimeRecord = typeof timeRecords.$inferSelect;
 export type Setting = typeof settings.$inferSelect;
+
+export const timeCorrectionRequestsRelations = relations(timeCorrectionRequests, ({ one }) => ({
+  request: one(overtimeRequests, { fields: [timeCorrectionRequests.requestId], references: [overtimeRequests.id] }),
+  employee: one(employees, { fields: [timeCorrectionRequests.employeeId], references: [employees.id], relationName: "correctionEmployee" }),
+  reviewer: one(employees, { fields: [timeCorrectionRequests.reviewerId], references: [employees.id], relationName: "correctionReviewer" }),
+}));
+export type TimeCorrectionRequest = typeof timeCorrectionRequests.$inferSelect;

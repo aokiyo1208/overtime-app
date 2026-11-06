@@ -1,0 +1,7 @@
+CREATE TYPE "public"."correction_kind" AS ENUM('CORRECT', 'VOID_START');--> statement-breakpoint
+ALTER TABLE "time_correction_requests" ALTER COLUMN "proposed_started_at" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "time_correction_requests" ALTER COLUMN "proposed_ended_at" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "time_correction_requests" ALTER COLUMN "proposed_break_minutes" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "time_correction_requests" ADD COLUMN "kind" "correction_kind" DEFAULT 'CORRECT' NOT NULL;--> statement-breakpoint
+ALTER TABLE "time_records" ADD COLUMN "voided_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "time_correction_requests" ADD CONSTRAINT "corrections_proposal_shape" CHECK (("time_correction_requests"."kind" = 'CORRECT' AND "time_correction_requests"."proposed_started_at" IS NOT NULL AND "time_correction_requests"."proposed_ended_at" IS NOT NULL AND "time_correction_requests"."proposed_break_minutes" IS NOT NULL) OR ("time_correction_requests"."kind" = 'VOID_START' AND "time_correction_requests"."proposed_started_at" IS NULL AND "time_correction_requests"."proposed_ended_at" IS NULL AND "time_correction_requests"."proposed_break_minutes" IS NULL));

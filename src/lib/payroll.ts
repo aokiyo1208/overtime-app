@@ -1,6 +1,6 @@
 import "server-only";
 import { and, asc, desc, eq, gte, inArray, lte, or } from "drizzle-orm";
-import { db } from "./db";
+import { db, type DB, type Tx } from "./db";
 import * as t from "@/db/schema";
 import type { Employee, OvertimeRequest, Salary, Setting, TimeRecord } from "@/db/schema";
 import {
@@ -12,18 +12,19 @@ import {
   type MonthTotals,
   type Segment,
 } from "./overtime";
+import { activeTimeRecord } from "./time-record";
 import { monthBounds, shiftYm, weekdayOf } from "./time";
 
-export async function getSettings(): Promise<Setting> {
-  const row = await db.query.settings.findFirst({ where: eq(t.settings.id, 1) });
+export async function getSettings(conn: DB | Tx = db): Promise<Setting> {
+  const row = await conn.query.settings.findFirst({ where: eq(t.settings.id, 1) });
   if (row) return row;
-  const [created] = await db.insert(t.settings).values({ id: 1 }).onConflictDoNothing().returning();
-  return created ?? (await db.query.settings.findFirst({ where: eq(t.settings.id, 1) }))!;
+  const [created] = await conn.insert(t.settings).values({ id: 1 }).onConflictDoNothing().returning();
+  return created ?? (await conn.query.settings.findFirst({ where: eq(t.settings.id, 1) }))!;
 }
 
 /** 休日カレンダー（"YYYY-MM-DD" → 法定休日か） */
-export async function getHolidayMap(fromYmd: string, toYmd: string): Promise<Map<string, boolean>> {
-  const rows = await db.select().from(t.holidays).where(and(gte(t.holidays.date, fromYmd), lte(t.holidays.date, toYmd)));
+export async function getHolidayMap(fromYmd: string, toYmd: string, conn: DB | Tx = db): Promise<Map<string, boolean>> {
+  const rows = await conn.select().from(t.holidays).where(and(gte(t.holidays.date, fromYmd), lte(t.holidays.date, toYmd)));
   return new Map(rows.map((h) => [h.date, h.isLegal]));
 }
 
@@ -51,9 +52,9 @@ export async function isMonthClosed(ym: string): Promise<boolean> {
 }
 
 /** 対象月の末日時点で有効な給与 */
-export async function salaryFor(employeeId: string, ym: string): Promise<Salary | null> {
+export async function salaryFor(employeeId: string, ym: string, conn: DB | Tx = db): Promise<Salary | null> {
   const { last } = monthBounds(ym);
-  const row = await db.query.salaries.findFirst({
+  const row = await conn.query.salaries.findFirst({
     where: and(eq(t.salaries.employeeId, employeeId), lte(t.salaries.effectiveFrom, last)),
     orderBy: [desc(t.salaries.effectiveFrom), desc(t.salaries.createdAt)],
   });
@@ -62,9 +63,9 @@ export async function salaryFor(employeeId: string, ym: string): Promise<Salary 
 
 export type RequestWithRecord = OvertimeRequest & { timeRecord: TimeRecord | null };
 
-export async function monthRequests(employeeId: string, ym: string): Promise<RequestWithRecord[]> {
+export async function monthRequests(employeeId: string, ym: string, conn: DB | Tx = db): Promise<RequestWithRecord[]> {
   const { first, last } = monthBounds(ym);
-  return db.query.overtimeRequests.findMany({
+  return conn.query.overtimeRequests.findMany({
     where: and(eq(t.overtimeRequests.employeeId, employeeId), gte(t.overtimeRequests.workDate, first), lte(t.overtimeRequests.workDate, last)),
     with: { timeRecord: true },
     orderBy: [desc(t.overtimeRequests.workDate), desc(t.overtimeRequests.plannedStart)],
@@ -75,7 +76,7 @@ export async function monthRequests(employeeId: string, ym: string): Promise<Req
 export function toSegments(requests: RequestWithRecord[], s: Setting, holidays: Map<string, boolean>): Segment[] {
   const out: Segment[] = [];
   for (const r of requests) {
-    const rec = r.timeRecord;
+    const rec = activeTimeRecord(r.timeRecord);
     if (r.status !== "APPROVED" || !rec?.endedAt) continue;
     const iv = effectiveInterval(
       { start: r.plannedStart, end: r.plannedEnd },
@@ -92,7 +93,7 @@ function toProjectedSegments(requests: RequestWithRecord[], s: Setting, holidays
   const out: Segment[] = [];
   for (const r of requests) {
     if (r.status !== "APPROVED" && r.status !== "PENDING") continue;
-    const rec = r.timeRecord;
+    const rec = activeTimeRecord(r.timeRecord);
     const done = r.status === "APPROVED" && rec?.endedAt ? rec : null;
     const iv = done
       ? effectiveInterval({ start: r.plannedStart, end: r.plannedEnd }, { start: done.startedAt, end: done.endedAt! }, done.excessStatus === "APPROVED")
@@ -118,17 +119,17 @@ interface Ctx {
   holidays: Map<string, boolean>;
 }
 
-async function ctxFor(ym: string, ctx?: Ctx): Promise<Ctx> {
+async function ctxFor(ym: string, ctx?: Ctx, conn: DB | Tx = db): Promise<Ctx> {
   if (ctx) return ctx;
   const { first, last } = monthBounds(ym);
-  return { settings: await getSettings(), holidays: await getHolidayMap(first, last) };
+  return { settings: await getSettings(conn), holidays: await getHolidayMap(first, last, conn) };
 }
 
 /** 1人・1か月の集計（その時点の給与マスタで計算） */
-export async function computeEmployeeMonth(employee: EmpLite, ym: string, ctx?: Ctx): Promise<EmployeeMonth> {
-  const { settings, holidays } = await ctxFor(ym, ctx);
-  const totals = calcMonth(toSegments(await monthRequests(employee.id, ym), settings, holidays), settings);
-  const sal = await salaryFor(employee.id, ym);
+export async function computeEmployeeMonth(employee: EmpLite, ym: string, ctx?: Ctx, conn: DB | Tx = db): Promise<EmployeeMonth> {
+  const { settings, holidays } = await ctxFor(ym, ctx, conn);
+  const totals = calcMonth(toSegments(await monthRequests(employee.id, ym, conn), settings, holidays), settings);
+  const sal = await salaryFor(employee.id, ym, conn);
   if (!sal) return { employee, ym, totals, hourlyRate: null, amount: null, payType: null };
   return {
     employee,

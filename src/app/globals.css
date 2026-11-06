@@ -130,3 +130,23 @@ p { margin: 0; }
 .flash.err { background: var(--bad-bg); color: var(--bad); }
 
 details > summary { cursor: pointer; font-weight: 700; font-size: 14px; }
+
+/* 打刻修正：既存のカード・配色を利用 */
+.correction-fieldset { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.correction-fieldset legend { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+.correction-date-fields { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 10px; }
+.correction-date-fields .input { min-width: 0; padding-inline: 8px; }
+.correction-current { padding-top: 12px; border-top: 1px solid var(--line-2); }
+.correction-reason { white-space: pre-wrap; overflow-wrap: anywhere; }
+.correction-diff-head, .correction-diff-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.correction-diff-row { padding: 10px 0; border-bottom: 1px solid var(--line-2); }
+.correction-diff-row .mono { overflow-wrap: anywhere; }
+.correction-changed { color: var(--accent-ink); background: var(--accent-wash); border-radius: 4px; padding: 2px 4px; }
+.correction-review { border: 1px solid var(--accent-tint); }
+.correction-review-body { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 24px; }
+.correction-review-actions { padding-top: 14px; border-top: 1px solid var(--line-2); }
+@media (max-width: 640px) {
+  .correction-review-body { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .correction-review-actions > form, .correction-review-actions > details { width: 100%; }
+  .correction-review-actions .btn { width: 100%; min-height: 44px; }
+}

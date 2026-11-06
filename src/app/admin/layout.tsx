@@ -1,17 +1,18 @@
 import Link from "next/link";
-import { count, eq } from "drizzle-orm";
+import { and, count, eq, isNull } from "drizzle-orm";
 import { signOut } from "@/auth";
 import { db } from "@/lib/db";
-import { overtimeRequests, timeRecords } from "@/db/schema";
+import { overtimeRequests, timeRecords, timeCorrectionRequests } from "@/db/schema";
 import { requireAdmin } from "@/lib/session";
 import { AdminNav } from "@/components/admin-nav";
 import { BrandMark } from "@/components/icons";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const me = await requireAdmin();
-  const [[req], [exc]] = await Promise.all([
+  const [[req], [exc], [correction]] = await Promise.all([
     db.select({ n: count() }).from(overtimeRequests).where(eq(overtimeRequests.status, "PENDING")),
-    db.select({ n: count() }).from(timeRecords).where(eq(timeRecords.excessStatus, "PENDING")),
+    db.select({ n: count() }).from(timeRecords).where(and(eq(timeRecords.excessStatus, "PENDING"), isNull(timeRecords.voidedAt))),
+    db.select({ n: count() }).from(timeCorrectionRequests).where(eq(timeCorrectionRequests.status, "PENDING")),
   ]);
   return (
     <div className="a-shell">
@@ -23,7 +24,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             <span className="xs muted">管理者</span>
           </span>
         </Link>
-        <AdminNav pending={(req?.n ?? 0) + (exc?.n ?? 0)} />
+        <AdminNav pending={(req?.n ?? 0) + (exc?.n ?? 0) + (correction?.n ?? 0)} />
         <div className="stack" style={{ marginTop: "auto", gap: 4 }}>
           <Link href="/" className="small">自分の打刻画面へ</Link>
           <span className="xs muted">{me.name}</span>

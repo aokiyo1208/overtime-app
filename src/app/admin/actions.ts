@@ -1,6 +1,6 @@
 "use server";
 
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, gte, lte, isNotNull } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -20,203 +20,145 @@ function back(path: string, kind: "msg" | "err", text: string): never {
 const refresh = () => revalidatePath("/", "layout");
 const ymdRe = /^\d{4}-\d{2}-\d{2}$/;
 
-/* ---------- 承認 ---------- */
+import { lockMonth, lockedRequest, monthClosed } from "@/lib/work-lock";
+import { activeTimeRecord } from "@/lib/time-record";
+import { pendingCorrection } from "@/lib/corrections";
 
+/* ---------- 承認 ---------- */
 async function decide(adminId: string, id: string, status: "APPROVED" | "REJECTED", comment?: string) {
-  const req = await db.query.overtimeRequests.findFirst({ where: eq(t.overtimeRequests.id, id), with: { employee: true } });
-  if (!req) return "申請が見つかりません。";
-  if (req.status !== "PENDING") return "すでに処理済みの申請です。";
-  if (await isMonthClosed(ymOf(req.workDate))) return `${ymOf(req.workDate)}は月次確定済みのため処理できません。確定を解除してください。`;
-  await db.transaction(async (tx) => {
-    await tx
-      .update(t.overtimeRequests)
-      .set({ status, approverId: adminId, decidedAt: new Date(), rejectComment: status === "REJECTED" ? comment : null })
-      .where(eq(t.overtimeRequests.id, id));
+  const result = await db.transaction(async (tx) => {
+    const req = await lockedRequest(tx, id);
+    if (!req) return { error: "申請が見つかりません。" };
+    if (req.status !== "PENDING") return { error: "すでに処理済みの申請です。" };
+    if (await monthClosed(tx, req.workDate)) return { error: `${ymOf(req.workDate)}は月次確定済みのため処理できません。確定を解除してください。` };
+    if (status === "REJECTED" && await pendingCorrection(tx, id)) return { error: "打刻修正の承認待ちです。先に修正申請を判断してください。" };
+    const employee = await tx.query.employees.findFirst({ where: eq(t.employees.id, req.employeeId) });
+    if (!employee) return { error: "社員が見つかりません。" };
+    await tx.update(t.overtimeRequests).set({ status, approverId: adminId, decidedAt: new Date(), rejectComment: status === "REJECTED" ? comment : null }).where(eq(t.overtimeRequests.id, id));
     await logChange(tx, { table: "overtime_requests", id, by: adminId, before: { status: req.status }, after: { status, comment }, reason: status === "APPROVED" ? "承認" : "却下" });
+    return { req, employee };
   });
-  await notify(
-    req.employee.email,
-    status === "APPROVED" ? "残業申請が承認されました" : "残業申請が却下されました",
-    `${fmtDateShort(req.workDate)} ${hmOf(req.plannedStart)}–${hmOf(req.plannedEnd)}${comment ? `\n理由：${comment}` : ""}`,
-  );
+  if (result.error) return result.error;
+  const req = result.req!;
+  await notify(result.employee!.email, status === "APPROVED" ? "残業申請が承認されました" : "残業申請が却下されました", `${fmtDateShort(req.workDate)} ${hmOf(req.plannedStart)}–${hmOf(req.plannedEnd)}${comment ? `\n理由：${comment}` : ""}`);
   return null;
 }
-
 export async function approveRequest(fd: FormData) {
   const admin = await requireAdmin();
   const err = await decide(admin.id, String(fd.get("id") ?? ""), "APPROVED");
-  refresh();
-  back("/admin/approvals", err ? "err" : "msg", err ?? "承認しました。");
+  refresh(); back("/admin/approvals", err ? "err" : "msg", err ?? "承認しました。");
 }
-
 export async function rejectRequest(fd: FormData) {
   const admin = await requireAdmin();
   const comment = String(fd.get("comment") ?? "").trim();
   if (!comment) back("/admin/approvals", "err", "却下するときは理由を入力してください。");
   const err = await decide(admin.id, String(fd.get("id") ?? ""), "REJECTED", comment);
-  refresh();
-  back("/admin/approvals", err ? "err" : "msg", err ?? "却下しました。");
+  refresh(); back("/admin/approvals", err ? "err" : "msg", err ?? "却下しました。");
 }
-
 export async function bulkApprove(fd: FormData) {
   const admin = await requireAdmin();
   const ids = fd.getAll("ids").map(String);
   if (ids.length === 0) back("/admin/approvals", "err", "承認する申請を選んでください。");
-  let ok = 0;
-  let firstErr: string | null = null;
-  for (const id of ids) {
-    const err = await decide(admin.id, id, "APPROVED");
-    if (err) firstErr ??= err;
-    else ok++;
-  }
-  refresh();
-  back("/admin/approvals", ok > 0 ? "msg" : "err", `${ok}件を承認しました。${firstErr ? `（${firstErr}）` : ""}`);
+  let ok = 0; let firstErr: string | null = null;
+  for (const id of ids) { const err = await decide(admin.id, id, "APPROVED"); if (err) firstErr ??= err; else ok++; }
+  refresh(); back("/admin/approvals", ok > 0 ? "msg" : "err", `${ok}件を承認しました。${firstErr ? `（${firstErr}）` : ""}`);
 }
-
 export async function decideExcess(fd: FormData) {
   const admin = await requireAdmin();
   const id = String(fd.get("recordId") ?? "");
   const approve = fd.get("approve") === "1";
-  const rec = await db.query.timeRecords.findFirst({ where: eq(t.timeRecords.id, id), with: { request: true } });
-  if (!rec || rec.excessStatus !== "PENDING") back("/admin/approvals", "err", "すでに処理済みです。");
-  if (await isMonthClosed(ymOf(rec.request.workDate))) back("/admin/approvals", "err", "月次確定済みのため処理できません。");
   await db.transaction(async (tx) => {
+    const initial = await tx.query.timeRecords.findFirst({ where: eq(t.timeRecords.id, id) });
+    if (!initial) back("/admin/approvals", "err", "すでに処理済みです。");
+    const req = await lockedRequest(tx, initial.requestId);
+    const rec = activeTimeRecord(await tx.query.timeRecords.findFirst({ where: eq(t.timeRecords.id, id) }));
+    if (!req || !rec || rec.excessStatus !== "PENDING") back("/admin/approvals", "err", "すでに処理済みです。");
+    if (await monthClosed(tx, req.workDate)) back("/admin/approvals", "err", "月次確定済みのため処理できません。");
+    if (await pendingCorrection(tx, req.id)) back("/admin/approvals", "err", "打刻修正の承認待ちです。先に修正申請を判断してください。");
     await tx.update(t.timeRecords).set({ excessStatus: approve ? "APPROVED" : "REJECTED" }).where(eq(t.timeRecords.id, id));
     await logChange(tx, { table: "time_records", id, by: admin.id, before: { excessStatus: "PENDING" }, after: { excessStatus: approve ? "APPROVED" : "REJECTED" }, reason: "予定超過の判断" });
   });
-  refresh();
-  back("/admin/approvals", "msg", approve ? "超過分を承認しました。" : "超過分は計上しないことにしました。");
+  refresh(); back("/admin/approvals", "msg", approve ? "超過分を承認しました。" : "超過分は計上しないことにしました。");
 }
-
-/** 承認済みの申請を管理者が取り消す（理由必須） */
 export async function cancelApproved(fd: FormData) {
-  const admin = await requireAdmin();
-  const id = String(fd.get("id") ?? "");
-  const reason = String(fd.get("reason") ?? "").trim();
-  const to = String(fd.get("to") ?? "/admin/approvals");
+  const admin = await requireAdmin(); const id = String(fd.get("id") ?? "");
+  const reason = String(fd.get("reason") ?? "").trim(); const to = String(fd.get("to") ?? "/admin/approvals");
   if (!reason) back(to, "err", "取り消す理由を入力してください。");
-  const req = await db.query.overtimeRequests.findFirst({ where: eq(t.overtimeRequests.id, id) });
-  if (!req || req.status !== "APPROVED") back(to, "err", "承認済みの申請ではありません。");
-  if (await isMonthClosed(ymOf(req.workDate))) back(to, "err", "月次確定済みのため処理できません。");
   await db.transaction(async (tx) => {
+    const req = await lockedRequest(tx, id);
+    if (!req || req.status !== "APPROVED") back(to, "err", "承認済みの申請ではありません。");
+    if (await monthClosed(tx, req.workDate)) back(to, "err", "月次確定済みのため処理できません。");
+    if (await pendingCorrection(tx, id)) back(to, "err", "打刻修正の承認待ちです。先に修正申請を判断してください。");
     await tx.update(t.overtimeRequests).set({ status: "CANCELED" }).where(eq(t.overtimeRequests.id, id));
     await logChange(tx, { table: "overtime_requests", id, by: admin.id, before: { status: "APPROVED" }, after: { status: "CANCELED" }, reason });
   });
-  refresh();
-  back(to, "msg", "承認を取り消しました。");
+  refresh(); back(to, "msg", "承認を取り消しました。");
 }
-
-/* ---------- 打刻の修正（社員別詳細） ---------- */
-
+/* ---------- 打刻の修正（旧依頼の対応・社員別詳細） ---------- */
 export async function correctRecord(fd: FormData) {
-  const admin = await requireAdmin();
-  const id = String(fd.get("recordId") ?? "");
-  const to = String(fd.get("to") ?? "/admin/employees");
-  const startHm = String(fd.get("start") ?? "");
-  const endHm = String(fd.get("end") ?? "");
+  const admin = await requireAdmin(); const id = String(fd.get("recordId") ?? "");
+  const to = String(fd.get("to") ?? "/admin/employees"); const startHm = String(fd.get("start") ?? ""); const endHm = String(fd.get("end") ?? "");
   const breakMinutes = Math.max(0, Math.min(600, Math.floor(Number(fd.get("breakMinutes") ?? 0) || 0)));
   const reason = String(fd.get("reason") ?? "").trim();
   if (!/^\d\d:\d\d$/.test(startHm) || !/^\d\d:\d\d$/.test(endHm)) back(to, "err", "開始と終了の時刻を入力してください。");
   if (!reason) back(to, "err", "修正の理由を入力してください。");
-
-  const rec = await db.query.timeRecords.findFirst({ where: eq(t.timeRecords.id, id), with: { request: true } });
-  if (!rec) back(to, "err", "打刻が見つかりません。");
-  if (await isMonthClosed(ymOf(rec.request.workDate))) back(to, "err", "月次確定済みのため修正できません。確定を解除してください。");
-
-  const startedAt = jstDateTime(rec.request.workDate, startHm);
-  let endedAt = jstDateTime(rec.request.workDate, endHm);
-  if (endedAt <= startedAt) endedAt = new Date(endedAt.getTime() + 24 * 3600_000);
-  const before = { startedAt: rec.startedAt, endedAt: rec.endedAt, breakMinutes: rec.breakMinutes };
-  const planned = rec.request;
-  const exceeds = startedAt < planned.plannedStart || endedAt > planned.plannedEnd;
-
   await db.transaction(async (tx) => {
-    await tx
-      .update(t.timeRecords)
-      .set({
-        startedAt,
-        endedAt,
-        breakMinutes,
-        corrected: true,
-        correctionRequest: null,
-        excessStatus: exceeds ? (rec.excessStatus === "APPROVED" ? "APPROVED" : "PENDING") : "NONE",
-      })
-      .where(eq(t.timeRecords.id, id));
+    const initial = await tx.query.timeRecords.findFirst({ where: eq(t.timeRecords.id, id) });
+    if (!initial) back(to, "err", "打刻が見つかりません。");
+    const req = await lockedRequest(tx, initial.requestId);
+    const rec = activeTimeRecord(await tx.query.timeRecords.findFirst({ where: eq(t.timeRecords.id, id) }));
+    if (!req || !rec) back(to, "err", "打刻が見つかりません。");
+    if (await monthClosed(tx, req.workDate)) back(to, "err", "月次確定済みのため修正できません。確定を解除してください。");
+    if (await pendingCorrection(tx, req.id)) back(to, "err", "打刻修正の承認待ちです。先に修正申請を判断してください。");
+    const startedAt = jstDateTime(req.workDate, startHm); let endedAt = jstDateTime(req.workDate, endHm);
+    if (endedAt <= startedAt) endedAt = new Date(endedAt.getTime() + 24 * 3600_000);
+    const before = { startedAt: rec.startedAt, endedAt: rec.endedAt, breakMinutes: rec.breakMinutes };
+    const exceeds = startedAt < req.plannedStart || endedAt > req.plannedEnd;
+    await tx.update(t.timeRecords).set({ startedAt, endedAt, breakMinutes, corrected: true, correctionRequest: null, excessStatus: exceeds ? (rec.excessStatus === "APPROVED" ? "APPROVED" : "PENDING") : "NONE" }).where(eq(t.timeRecords.id, id));
     await logChange(tx, { table: "time_records", id, by: admin.id, before, after: { startedAt, endedAt, breakMinutes }, reason });
   });
-  refresh();
-  back(to, "msg", "打刻を修正しました。変更履歴に記録しています。");
+  refresh(); back(to, "msg", "打刻を修正しました。変更履歴に記録しています。");
 }
-
 /* ---------- 月次確定 ---------- */
-
 export async function closeMonth(fd: FormData) {
-  const admin = await requireAdmin();
-  const ym = String(fd.get("ym") ?? "");
-  const to = `/admin/monthly?m=${ym}`;
+  const admin = await requireAdmin(); const ym = String(fd.get("ym") ?? ""); const to = `/admin/monthly?m=${ym}`;
   if (!isValidYm(ym)) back("/admin/monthly", "err", "月が正しくありません。");
-  if (await isMonthClosed(ym)) back(to, "err", "すでに確定済みです。");
-
-  const { first, last } = monthBounds(ym);
-  const pendingAny = (
-    await db.select({ id: t.overtimeRequests.id, d: t.overtimeRequests.workDate }).from(t.overtimeRequests).where(eq(t.overtimeRequests.status, "PENDING"))
-  ).filter((r) => r.d >= first && r.d <= last);
-  if (pendingAny.length > 0) back(to, "err", `承認待ちの申請が${pendingAny.length}件あります。先に承認または却下してください。`);
-
-  const unfinished = (
-    await db.query.timeRecords.findMany({ with: { request: true } })
-  ).filter((r) => !r.endedAt && r.request.workDate >= first && r.request.workDate <= last && r.request.status !== "REJECTED" && r.request.status !== "CANCELED");
-  if (unfinished.length > 0) back(to, "err", `終了打刻がない打刻が${unfinished.length}件あります。社員別詳細で修正してください。`);
-  const excessPending = (await db.query.timeRecords.findMany({ with: { request: true } })).filter(
-    (r) => r.excessStatus === "PENDING" && r.request.workDate >= first && r.request.workDate <= last,
-  );
-  if (excessPending.length > 0) back(to, "err", `予定超過の承認待ちが${excessPending.length}件あります。先に判断してください。`);
-
-  const settings = await getSettings();
-  const holidays = await getHolidayMap(first, last);
-  const emps = await db.select().from(t.employees);
-  const rows: EmployeeMonth[] = [];
-  for (const e of emps) {
-    const r = await computeEmployeeMonth(e, ym, { settings, holidays });
-    const any = r.totals.innerMinutes + r.totals.statutoryMinutes + r.totals.holidayMinutes > 0;
-    if (any || e.isActive) rows.push(r);
-  }
-  const noSalary = rows.filter((r) => r.hourlyRate === null && r.totals.statutoryMinutes + r.totals.innerMinutes + r.totals.holidayMinutes > 0);
-  if (noSalary.length > 0) back(to, "err", `給与マスタが未登録の社員がいます：${noSalary.map((r) => r.employee.name).join("、")}`);
-
   await db.transaction(async (tx) => {
-    for (const r of rows) {
-      await tx.insert(t.monthlySummaries).values({
-        employeeId: r.employee.id,
-        yearMonth: ym,
-        innerMinutes: r.totals.innerMinutes,
-        statutoryMinutes: r.totals.statutoryMinutes,
-        over60Minutes: r.totals.over60Minutes,
-        nightMinutes: r.totals.nightMinutes,
-        holidayMinutes: r.totals.holidayMinutes,
-        hourlyRate: r.hourlyRate,
-        amount: r.amount,
-      });
-    }
+    await lockMonth(tx, ym);
+    if (await monthClosed(tx, `${ym}-01`)) back(to, "err", "すでに確定済みです。");
+    const { first, last } = monthBounds(ym);
+    const requests = (await tx.query.overtimeRequests.findMany({ where: and(gte(t.overtimeRequests.workDate, first), lte(t.overtimeRequests.workDate, last)), with: { timeRecord: true } })).map(request => ({ ...request, timeRecord: activeTimeRecord(request.timeRecord) }));
+    const corrections = await tx.select({ id: t.timeCorrectionRequests.id }).from(t.timeCorrectionRequests).innerJoin(t.overtimeRequests, eq(t.timeCorrectionRequests.requestId, t.overtimeRequests.id)).where(and(eq(t.timeCorrectionRequests.status, "PENDING"), gte(t.overtimeRequests.workDate, first), lte(t.overtimeRequests.workDate, last)));
+    if (corrections.length) back(to, "err", `打刻修正の承認待ちが${corrections.length}件あります。先に判断してください。`);
+    const legacy = requests.filter(r => r.timeRecord?.correctionRequest);
+    if (legacy.length) back(to, "err", `以前の打刻修正依頼が${legacy.length}件あります。先に対応してください。`);
+    const pending = requests.filter(r => r.status === "PENDING");
+    if (pending.length) back(to, "err", `承認待ちの申請が${pending.length}件あります。先に承認または却下してください。`);
+    const unfinished = requests.filter(r => r.timeRecord && !r.timeRecord.endedAt && r.status !== "REJECTED" && r.status !== "CANCELED");
+    if (unfinished.length) back(to, "err", `終了打刻がない打刻が${unfinished.length}件あります。社員別詳細で修正してください。`);
+    const excessPending = requests.filter(r => r.timeRecord?.excessStatus === "PENDING");
+    if (excessPending.length) back(to, "err", `予定超過の承認待ちが${excessPending.length}件あります。先に判断してください。`);
+    const settings = await getSettings(tx); const holidays = await getHolidayMap(first, last, tx);
+    const emps = await tx.select().from(t.employees); const rows: EmployeeMonth[] = [];
+    for (const e of emps) { const r = await computeEmployeeMonth(e, ym, { settings, holidays }, tx); if (e.isActive || r.totals.innerMinutes + r.totals.statutoryMinutes + r.totals.holidayMinutes > 0) rows.push(r); }
+    const noSalary = rows.filter(r => r.hourlyRate === null && r.totals.statutoryMinutes + r.totals.innerMinutes + r.totals.holidayMinutes > 0);
+    if (noSalary.length) back(to, "err", `給与マスタが未登録の社員がいます：${noSalary.map(r => r.employee.name).join("、")}`);
+    for (const r of rows) await tx.insert(t.monthlySummaries).values({ employeeId: r.employee.id, yearMonth: ym, innerMinutes: r.totals.innerMinutes, statutoryMinutes: r.totals.statutoryMinutes, over60Minutes: r.totals.over60Minutes, nightMinutes: r.totals.nightMinutes, holidayMinutes: r.totals.holidayMinutes, hourlyRate: r.hourlyRate, amount: r.amount });
     await tx.insert(t.monthlyCloses).values({ yearMonth: ym, closedById: admin.id });
     await logChange(tx, { table: "monthly_closes", id: ym, by: admin.id, after: { closed: true }, reason: "月次確定" });
   });
-  refresh();
-  back(to, "msg", `${ym}を確定しました。`);
+  refresh(); back(to, "msg", `${ym}を確定しました。`);
 }
-
 export async function reopenMonth(fd: FormData) {
-  const admin = await requireAdmin();
-  const ym = String(fd.get("ym") ?? "");
-  const to = `/admin/monthly?m=${ym}`;
+  const admin = await requireAdmin(); const ym = String(fd.get("ym") ?? ""); const to = `/admin/monthly?m=${ym}`;
   if (!isValidYm(ym)) back("/admin/monthly", "err", "月が正しくありません。");
   await db.transaction(async (tx) => {
+    await lockMonth(tx, ym);
     await tx.delete(t.monthlySummaries).where(eq(t.monthlySummaries.yearMonth, ym));
     await tx.delete(t.monthlyCloses).where(eq(t.monthlyCloses.yearMonth, ym));
     await logChange(tx, { table: "monthly_closes", id: ym, by: admin.id, before: { closed: true }, after: { closed: false }, reason: "確定解除" });
   });
-  refresh();
-  back(to, "msg", `${ym}の確定を解除しました。`);
+  refresh(); back(to, "msg", `${ym}の確定を解除しました。`);
 }
 
 /* ---------- マスタ ---------- */

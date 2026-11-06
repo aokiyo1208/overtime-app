@@ -1,3 +1,4 @@
+import { activeTimeRecord } from "@/lib/time-record";
 import Link from "next/link";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -8,7 +9,7 @@ import { addDays, currentYm, fmtDateLong, fmtDateShort, fmtMinutes, fmtYen, hmOf
 import { Elapsed } from "@/components/elapsed";
 import { Flash, one, type SP } from "@/components/flash";
 import { IconAlert, IconCheck, IconPlay, IconStop } from "@/components/icons";
-import { endStamp, requestCorrection, startStamp } from "./actions";
+import { endStamp, startStamp } from "./actions";
 
 export const metadata = { title: "打刻" };
 
@@ -37,7 +38,7 @@ export default async function HomePage({ searchParams }: { searchParams: SP }) {
       with: { request: true },
       orderBy: desc(timeRecords.startedAt),
     })
-  ).filter((r) => r.request.workDate < today && r.request.status !== "REJECTED" && r.request.status !== "CANCELED");
+  ).filter((r) => activeTimeRecord(r) && r.request.workDate < today && r.request.status !== "REJECTED" && r.request.status !== "CANCELED");
 
   const settings = await getSettings();
   const { first, last } = monthBounds(ym);
@@ -65,17 +66,8 @@ export default async function HomePage({ searchParams }: { searchParams: SP }) {
                 <IconAlert size={18} /> {fmtDateShort(r.request.workDate)}の終了打刻がありません
               </span>
             </summary>
-            {r.correctionRequest ? (
-              <p className="small" style={{ marginTop: 8 }}>修正依頼済み：{r.correctionRequest}</p>
-            ) : (
-              <form action={requestCorrection} className="stack" style={{ marginTop: 10 }}>
-                <input type="hidden" name="recordId" value={r.id} />
-                <input type="hidden" name="from" value="/" />
-                <label htmlFor={`fix-${r.id}`} className="label">正しい終了時刻と理由</label>
-                <input id={`fix-${r.id}`} name="text" className="input" placeholder="例：21:15 終了。押し忘れ" required />
-                <button type="submit" className="btn sm">修正を依頼</button>
-              </form>
-            )}
+            {r.correctionRequest && <p className="small" style={{ marginTop: 8 }}>以前の修正依頼：{r.correctionRequest}</p>}
+            <Link href={`/corrections/${r.requestId}`} className="btn sm" style={{ marginTop: 10 }}>打刻を修正申請</Link>
           </details>
         ))}
 
@@ -87,7 +79,7 @@ export default async function HomePage({ searchParams }: { searchParams: SP }) {
           </section>
         ) : (
           todays.map((r) => {
-            const rec = r.timeRecord;
+            const rec = activeTimeRecord(r.timeRecord);
             return (
               <div key={r.id} className="stack" style={{ gap: 16 }}>
                 <section className="card stack" style={{ gap: 8 }}>
@@ -131,6 +123,8 @@ export default async function HomePage({ searchParams }: { searchParams: SP }) {
                   </form>
                 )}
 
+                <Link href={`/corrections/${r.id}`} className="btn">打刻忘れ・時刻の修正</Link>
+
                 {rec?.endedAt && (
                   <section className="card stack" style={{ alignItems: "center", gap: 6, textAlign: "center" }}>
                     <IconCheck size={32} color="var(--ok)" />
@@ -146,6 +140,12 @@ export default async function HomePage({ searchParams }: { searchParams: SP }) {
             );
           })
         )}
+
+        <section className="card stack">
+          <h2 style={{ fontSize: 15 }}>以前の打刻を修正したいとき</h2>
+          <p className="small muted">開始・終了の両方を忘れた場合も、履歴の残業申請から修正できます。</p>
+          <Link href="/history" className="btn">履歴から打刻を修正</Link>
+        </section>
 
         <section className="card stack">
           <div className="between">

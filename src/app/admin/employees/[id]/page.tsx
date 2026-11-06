@@ -1,6 +1,9 @@
+import { activeTimeRecord } from "@/lib/time-record";
 import Link from "next/link";
+import { requireAdmin } from "@/lib/session";
+import { CorrectionHistory } from "@/components/correction-summary";
 import { notFound } from "next/navigation";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import * as t from "@/db/schema";
 import { agreementStats, computeEmployeeMonth, dayTypeOf, DAY_TYPE_LABEL, getHolidayMap, getSettings, isMonthClosed, monthRequests, percentOfLimit } from "@/lib/payroll";
@@ -13,6 +16,7 @@ import { cancelApproved, correctRecord } from "../../actions";
 export const metadata = { title: "社員別詳細" };
 
 export default async function EmployeeDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: SP }) {
+  await requireAdmin();
   const { id } = await params;
   const sp = await searchParams;
   const emp = await db.query.employees.findFirst({ where: eq(t.employees.id, id) });
@@ -36,6 +40,10 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
   const recIds = new Set(requests.map((r) => r.timeRecord?.id).filter(Boolean));
   const myLogs = logs.filter((l) => recIds.has(l.targetId)).slice(0, 10);
   const admins = new Map((await db.select().from(t.employees)).map((e) => [e.id, e.name]));
+  const correctionHistory = requests.length ? await db.query.timeCorrectionRequests.findMany({
+    where: and(eq(t.timeCorrectionRequests.employeeId, id), inArray(t.timeCorrectionRequests.requestId, requests.map(r => r.id))),
+    with: { reviewer: true }, orderBy: desc(t.timeCorrectionRequests.createdAt),
+  }) : [];
   const pct = percentOfLimit(month.totals.statutoryMinutes, settings.limitMonthMinutes);
   const yearPct = percentOfLimit(stats.yearMinutes, settings.limitYearMinutes);
 
@@ -67,7 +75,7 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
         <h2>日別の申請・打刻</h2>
         {requests.length === 0 && <p className="card muted">この月の申請はありません。</p>}
         {requests.map((r) => {
-          const rec = r.timeRecord;
+          const rec = activeTimeRecord(r.timeRecord);
           const dt = dayTypeOf(r.workDate, settings, holidays);
           const chip = { PENDING: ["wait", "申請中"], APPROVED: ["ok", "承認済"], REJECTED: ["bad", "却下"], CANCELED: ["off", "取消"] }[r.status];
           return (
@@ -124,6 +132,8 @@ export default async function EmployeeDetail({ params, searchParams }: { params:
           );
         })}
       </section>
+
+      {correctionHistory.length > 0 && <CorrectionHistory items={correctionHistory} />}
 
       {myLogs.length > 0 && (
         <section className="stack" style={{ gap: 10 }}>
