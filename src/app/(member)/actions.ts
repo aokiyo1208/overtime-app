@@ -20,6 +20,12 @@ function back(path: string, kind: "msg" | "err", text: string): never {
   redirect(`${path}?${kind}=${encodeURIComponent(text)}`);
 }
 
+/** 管理者あての通知に載せる承認画面のURL。APP_URL を優先し、なければVercelの本番ドメインを使う。 */
+function approvalsUrl(): string | null {
+  const base = process.env.APP_URL?.trim() || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "");
+  return base ? `${base.replace(/\/+$/, "")}/admin/approvals` : null;
+}
+
 const ymdRe = /^\d{4}-\d{2}-\d{2}$/;
 const hmRe = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -75,7 +81,7 @@ export async function createRequest(fd: FormData) {
       await notify(
         admins.map((a) => a.email).join(", "),
         `残業申請が届きました（${me.name}）`,
-        `申請者：${me.name}\n対象日：${fmtDateShort(workDate)} ${start}–${end}\n業務内容：${task}\n理由：${reason}\n\n承認画面で確認してください。`,
+        `申請者：${me.name}\n対象日：${fmtDateShort(workDate)} ${start}–${end}\n業務内容：${task}\n理由：${reason}\n\n${approvalsUrl() ? `承認はこちら：${approvalsUrl()}` : "承認画面で確認してください。"}`,
       );
     }
   } catch (e) {
