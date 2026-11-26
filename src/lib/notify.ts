@@ -2,10 +2,10 @@ import "server-only";
 import nodemailer from "nodemailer";
 
 /**
- * 承認・却下などの通知。
+ * 申請（管理者あて）・承認・却下（本人あて）などの通知。
  * SMTP_HOST が設定されていればメールで送信し、SLACK_WEBHOOK_URL が設定されていればSlackにも投稿する。
  * どちらも未設定ならサーバーのログに出すだけ。
- * 送信に失敗しても、承認・却下の処理自体は止めない。
+ * 送信に失敗しても、申請・承認・却下の処理自体は止めない。
  */
 let transporter: nodemailer.Transporter | null = null;
 
@@ -16,10 +16,17 @@ function getTransporter() {
     host,
     port: Number(process.env.SMTP_PORT ?? 587),
     secure: process.env.SMTP_SECURE === "true",
+    // メールサーバーが応答しないときに、申請や承認の画面を長く待たせない
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 15_000,
     auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS ?? "" } : undefined,
   });
   return transporter;
 }
+
+/** Slackの特殊記法（<!channel> やリンク）として解釈されないようにする */
+const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 async function notifySlack(to: string, subject: string, body: string): Promise<void> {
   const url = process.env.SLACK_WEBHOOK_URL;
@@ -28,7 +35,8 @@ async function notifySlack(to: string, subject: string, body: string): Promise<v
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: `*${subject}*\n宛先: ${to}\n${body}` }),
+      body: JSON.stringify({ text: `*${esc(subject)}*\n宛先: ${esc(to)}\n${esc(body)}` }),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) console.error(`[notify] Slack投稿に失敗しました status=${res.status} subject=${subject}`);
   } catch (e) {

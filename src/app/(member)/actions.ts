@@ -5,11 +5,12 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { overtimeRequests, timeRecords } from "@/db/schema";
+import { employees, overtimeRequests, timeRecords } from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import { isMonthClosed } from "@/lib/payroll";
 import { excessMinutes } from "@/lib/overtime";
-import { jstDateTime, todayYmd, ymOf } from "@/lib/time";
+import { fmtDateShort, jstDateTime, todayYmd, ymOf } from "@/lib/time";
+import { notify } from "@/lib/notify";
 import { logChange } from "@/lib/audit";
 import { lockMonth, lockEmployee, lockedRequest, monthClosed } from "@/lib/work-lock";
 import { activeTimeRecord } from "@/lib/time-record";
@@ -67,6 +68,19 @@ export async function createRequest(fd: FormData) {
     isAfterTheFact: new Date() > plannedStart,
   });
   });
+  // 管理者へ申請があったことを知らせる。送れなくても申請は成立させる。
+  try {
+    const admins = await db.query.employees.findMany({ where: and(eq(employees.role, "ADMIN"), eq(employees.isActive, true)), columns: { email: true } });
+    if (admins.length > 0) {
+      await notify(
+        admins.map((a) => a.email).join(", "),
+        `残業申請が届きました（${me.name}）`,
+        `申請者：${me.name}\n対象日：${fmtDateShort(workDate)} ${start}–${end}\n業務内容：${task}\n理由：${reason}\n\n承認画面で確認してください。`,
+      );
+    }
+  } catch (e) {
+    console.error("[notify] 管理者への申請通知に失敗しました", e);
+  }
   revalidatePath("/", "layout");
   back("/history", "msg", "申請しました。承認されると通知が届きます。");
 }
